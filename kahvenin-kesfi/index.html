@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kahvenin Keşfi</title>
+<style>
+  :root { --bg:#120c08; --fg:#f4e9d8; --acc:#e8a33d; --panel:#1f1610; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); font-family: "Helvetica Neue", Arial, sans-serif; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 16px; }
+  canvas { width: 100%; aspect-ratio: 16/9; display: block; background: #000; border-radius: 8px; }
+  .bar { display: flex; gap: 12px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+  button { background: var(--panel); color: var(--fg); border: 1px solid #3a2a1e; border-radius: 6px; padding: 6px 12px; cursor: pointer; font: inherit; }
+  button:hover { border-color: var(--acc); }
+  #play { width: 48px; }
+  #scrub { flex: 1; min-width: 160px; accent-color: var(--acc); }
+  #time, #shotinfo { font-variant-numeric: tabular-nums; opacity: .85; font-size: 14px; }
+  .shots { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+  .shot { font-size: 12px; padding: 4px 8px; }
+  .shot.on { background: var(--acc); color: #1b1410; }
+  label { font-size: 14px; opacity: .9; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <canvas id="stage"></canvas>
+  <div class="bar">
+    <button id="play">▶</button>
+    <input id="scrub" type="range" min="0" step="0.01" value="0">
+    <span id="time">0:00</span>
+  </div>
+  <div class="bar">
+    <span id="shotinfo"></span>
+    <label><input id="subs" type="checkbox" checked> Altyazı</label>
+    <label><input id="tts" type="checkbox"> Seslendirme (tarayıcı TTS)</label>
+    <button id="export">⬇ WebM</button>
+  </div>
+  <div class="shots" id="shots"></div>
+</div>
+<script src="dist/app.js"></script>
+</body>
+</html>

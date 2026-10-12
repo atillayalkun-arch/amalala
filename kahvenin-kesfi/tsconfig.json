@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["ES2020", "DOM"],
+    "module": "none",
+    "outFile": "dist/app.js",
+    "strict": true,
+    "noImplicitAny": true,
+    "skipLibCheck": true,
+    "rootDir": "src",
+    "ignoreDeprecations": "6.0"
+  },
+  "files": ["src/core.ts", "src/assets.ts", "src/shots.ts", "src/main.ts"]
+}
