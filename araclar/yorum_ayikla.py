@@ -16,8 +16,8 @@ import re
 import sys
 from pathlib import Path
 
-HEAD = re.compile(r'^\*\*\[👍\s*(\d+)\s*·\s*(\d{4}-\d{2}-\d{2})([^\]]*)\]\*\*\s?(.*)$')
-REPLY = re.compile(r'^>\s*↳\s*\*\*\[👍\s*(\d+)\s*·\s*(\d{4}-\d{2}-\d{2})([^\]]*)\]\*\*\s?(.*)$')
+HEAD = re.compile(r'^\*\*\[👍\s*(\d[\d.,]*)\s*·\s*(\d{4}-\d{2}-\d{2})([^\]]*)\]\*\*\s?(.*)$')
+REPLY = re.compile(r'^>\s*↳\s*\*\*\[👍\s*(\d[\d.,]*)\s*·\s*(\d{4}-\d{2}-\d{2})([^\]]*)\]\*\*\s?(.*)$')
 SECTION = re.compile(r'^## Yorumlar\b(.*)$')
 COUNTS = re.compile(r'([\d.,]+) yorum: ([\d.,]+) ana yorum, ([\d.,]+) cevap(?: · kanal sahibinin cevapları: ([\d.,]+))?')
 TITLE = re.compile(r'^# (.+)$')
@@ -37,7 +37,7 @@ def num(text):
 
 
 def new_item(m):
-    return {'likes': int(m.group(1)), 'date': m.group(2),
+    return {'likes': num(m.group(1)), 'date': m.group(2),
             'owner': 'Kanal sahibi' in m.group(3),
             'lines': [m.group(4)], 'replies': []}
 
@@ -53,6 +53,7 @@ def finish(item):
             continue
         seen.add(key)
         uniq.append(r)
+    item['replies_raw'] = item['replies']
     item['replies'] = uniq
     item['dup'] = dup
 
@@ -97,6 +98,8 @@ def parse(path):
         if item is not None:
             item['lines'].append(text)
         elif last is not None:
+            if not text.strip():
+                continue
             # bos satirdan sonra gelen satir: onceki yorumun devami say
             last['lines'].extend(['', text])
             item = last
@@ -107,6 +110,10 @@ def parse(path):
             unparsed += 1
     for m in mains:
         finish(m)
+    if expected and sum(len(m['replies_raw']) for m in mains) == expected['reply']:
+        # baslik ham sayiyla tutuyor: ayni gorunen cevaplar gercek, silme
+        for m in mains:
+            m['replies'], m['dup'] = m['replies_raw'], 0
     return {'title': title, 'has_section': True, 'expected': expected,
             'mains': mains, 'unparsed': unparsed, 'joined': joined,
             'samples': samples, 'dup': sum(m['dup'] for m in mains)}
