@@ -19,7 +19,7 @@ from pathlib import Path
 HEAD = re.compile(r'^\*\*\[👍\s*(\d+)\s*·\s*(\d{4}-\d{2}-\d{2})([^\]]*)\]\*\*\s?(.*)$')
 REPLY = re.compile(r'^>\s*↳\s*\*\*\[👍\s*(\d+)\s*·\s*(\d{4}-\d{2}-\d{2})([^\]]*)\]\*\*\s?(.*)$')
 SECTION = re.compile(r'^## Yorumlar\b(.*)$')
-COUNTS = re.compile(r'(\d+) yorum: (\d+) ana yorum, (\d+) cevap(?: · kanal sahibinin cevapları: (\d+))?')
+COUNTS = re.compile(r'([\d.,]+) yorum: ([\d.,]+) ana yorum, ([\d.,]+) cevap(?: · kanal sahibinin cevapları: ([\d.,]+))?')
 TITLE = re.compile(r'^# (.+)$')
 
 ZERO_WIDTH = re.compile('[​‌‍⁠﻿]')
@@ -32,6 +32,10 @@ STORY = re.compile(r'私|わたし|自分|僕|ぼく|俺|母|父|親|上司|同�
 QUOTA = {'top': 0.30, 'soru': 0.20, 'istek': 0.15, 'hikaye': 0.15, 'rastgele': 0.20}
 
 
+def num(text):
+    return int(re.sub(r'[.,]', '', text))
+
+
 def new_item(m):
     return {'likes': int(m.group(1)), 'date': m.group(2),
             'owner': 'Kanal sahibi' in m.group(3),
@@ -40,8 +44,17 @@ def new_item(m):
 
 def finish(item):
     item['text'] = '\n'.join(l.rstrip() for l in item['lines']).strip()
+    seen, uniq, dup = set(), [], 0
     for r in item['replies']:
-        finish(r)
+        r['text'] = '\n'.join(l.rstrip() for l in r['lines']).strip()
+        key = (r['likes'], r['date'], r['owner'], r['text'])
+        if key in seen:
+            dup += 1
+            continue
+        seen.add(key)
+        uniq.append(r)
+    item['replies'] = uniq
+    item['dup'] = dup
 
 
 def parse(path):
@@ -55,37 +68,48 @@ def parse(path):
     start = next((i for i, l in enumerate(raw) if SECTION.match(l)), None)
     if start is None:
         return {'title': title, 'has_section': False, 'expected': None,
-                'mains': [], 'unparsed': 0}
+                'mains': [], 'unparsed': 0, 'joined': 0, 'samples': [], 'dup': 0}
     c = COUNTS.search(raw[start])
     expected = None
     if c:
-        expected = {'total': int(c.group(1)), 'main': int(c.group(2)),
-                    'reply': int(c.group(3)),
-                    'owner': int(c.group(4)) if c.group(4) else None}
-    mains, item, unparsed = [], None, 0
+        expected = {'total': num(c.group(1)), 'main': num(c.group(2)),
+                    'reply': num(c.group(3)),
+                    'owner': num(c.group(4)) if c.group(4) else None}
+    mains, item, last, unparsed = [], None, None, 0
+    joined, samples = 0, []
     for line in raw[start + 1:]:
         if line.startswith('## '):
             break
         m = HEAD.match(line)
         if m:
-            item = new_item(m)
+            item = last = new_item(m)
             mains.append(item)
             continue
         r = REPLY.match(line)
         if r and mains:
-            item = new_item(r)
+            item = last = new_item(r)
             mains[-1]['replies'].append(item)
             continue
         if line == '':
             item = None
-        elif item is not None:
-            item['lines'].append(re.sub(r'^>\s?', '', line) if line.startswith('>') else line)
-        elif line.strip() and not line.startswith('_('):
+            continue
+        text = re.sub(r'^>\s?', '', line) if line.startswith('>') else line
+        if item is not None:
+            item['lines'].append(text)
+        elif last is not None:
+            # bos satirdan sonra gelen satir: onceki yorumun devami say
+            last['lines'].extend(['', text])
+            item = last
+            joined += 1
+            if len(samples) < 3:
+                samples.append(line.strip()[:60])
+        elif not line.startswith('_('):
             unparsed += 1
     for m in mains:
         finish(m)
     return {'title': title, 'has_section': True, 'expected': expected,
-            'mains': mains, 'unparsed': unparsed}
+            'mains': mains, 'unparsed': unparsed, 'joined': joined,
+            'samples': samples, 'dup': sum(m['dup'] for m in mains)}
 
 
 def clean(text, max_chars):
@@ -154,27 +178,42 @@ def render(no, data, picks, args):
 
 
 def check(data):
-    """(durum, aciklama) dondurur."""
+    """(durum, aciklama) dondurur. HATA: dosyada basliktakinden az yorum var (veri kaybi)."""
     mains = data['mains']
     got_reply = sum(len(m['replies']) for m in mains)
     got_owner = sum(m['owner'] for m in mains) + sum(r['owner'] for m in mains for r in m['replies'])
     exp = data['expected']
-    notes = []
     if not data['has_section']:
         return 'UYARI', 'yorum bolumu bulunamadi'
     if exp is None:
         return 'UYARI', 'yorum basligindaki sayilar okunamadi (ana %d, cevap %d)' % (len(mains), got_reply)
-    status = 'OK'
-    if len(mains) != exp['main'] or got_reply != exp['reply']:
-        status = 'HATA'
-        notes.append('ana %d/%d, cevap %d/%d' % (len(mains), exp['main'], got_reply, exp['reply']))
-    else:
-        notes.append('ana %d/%d, cevap %d/%d' % (len(mains), exp['main'], got_reply, exp['reply']))
+    status, notes = 'OK', []
+
+    def worse(new):
+        nonlocal status
+        if new == 'HATA' or status == 'OK':
+            status = new
+
+    notes.append('ana %d/%d' % (len(mains), exp['main']))
+    if len(mains) < exp['main']:
+        worse('HATA')
+    elif len(mains) > exp['main']:
+        worse('UYARI')
+    notes.append('cevap %d/%d' % (got_reply, exp['reply']))
+    if got_reply < exp['reply']:
+        worse('HATA')
+    elif got_reply > exp['reply']:
+        worse('UYARI')
+        notes.append('dosyada basliktakinden fazla cevap var')
+    if data['dup']:
+        notes.append('%d yinelenen cevap silindi' % data['dup'])
     if exp['owner'] is not None and got_owner != exp['owner']:
-        status = 'UYARI' if status == 'OK' else status
+        worse('UYARI')
         notes.append('kanal sahibi %d/%d' % (got_owner, exp['owner']))
+    if data['joined']:
+        notes.append('%d bolum bos satirdan sonra onceki yoruma eklendi' % data['joined'])
     if data['unparsed']:
-        status = 'UYARI' if status == 'OK' else status
+        worse('UYARI')
         notes.append('%d taninmayan satir' % data['unparsed'])
     return status, '; '.join(notes)
 
@@ -218,6 +257,8 @@ def main():
         warn += status == 'UYARI'
         line = '%s | %-5s | %s | secilen ana yorum: %d' % (no, status, note, len(picks))
         report.append(line)
+        for smp in data['samples']:
+            report.append('      ornek devam satiri: ' + smp)
         print(line)
 
     summary = 'Toplam %d video: %d OK, %d UYARI, %d HATA. Cikti klasoru: %s' % (
